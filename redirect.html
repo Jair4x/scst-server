@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Twitch OAuth – Copy token</title>
+  <style>
+    :root { --bg:#0f1221; --card:#171a2e; --text:#e6e8ff; --muted:#9aa0c3; --ok:#4ade80; --err:#fb7185; --btn:#6366f1; }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 600px at 20% -10%, #1d2346, #0f1221);color:var(--text);font-family:system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;min-height:100svh;display:grid;place-items:center;padding:24px}
+    .card{width:min(720px,100%);background:linear-gradient(180deg,#1a1f3c, #141833);border:1px solid #2a2f55;border-radius:18px;box-shadow:0 10px 40px rgba(0,0,0,.35);padding:22px}
+    h1{margin:0 0 8px;font-size:22px}
+    p{margin:6px 0;color:var(--muted)}
+    .row{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}
+    .field{flex:1 1 240px;background:var(--card);border:1px solid #2b3160;border-radius:12px;padding:12px}
+    .label{font-size:12px;color:#b8bce0;letter-spacing:.3px;margin-bottom:6px}
+    .value{word-break:break-all;font-family:ui-monospace, SFMono-Regular, Menlo, monospace}
+    .token{display:flex;gap:8px;align-items:center}
+    input[type="text"]{flex:1;background:#0f132a;border:1px solid #2b3160;color:var(--text);padding:10px 12px;border-radius:10px;font-family:ui-monospace, SFMono-Regular, Menlo, monospace}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    button{border:0;background:var(--btn);color:white;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+    button.ghost{background:transparent;border:1px solid #30376b}
+    .ok{color:var(--ok);font-weight:600}
+    .err{color:var(--err);font-weight:600}
+    .hidden{display:none}
+    small{color:#9aa0c3}
+    .divider{height:1px;background:#2a2f55;margin:16px 0}
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <h1>Twitch login successful!</h1>
+    <p>Thank you for using SCST! In order to make it work, you need to click the button "Save to server" and your token will be sent to the server.<br/>
+       <small>If you want to know what happens with your token and data, you're free to check the <a href="https://github.com/jair4x/scst-server" target="_blank">source code</a>.</small>
+    </p>
+
+    <div class="row">
+      <div class="field">
+        <div class="label">Access Token</div>
+        <div class="token">
+          <input type="text" id="tokenInput" readonly>
+          <button id="toggleMask" class="ghost">Show</button>
+          <button id="copyBtn">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <div class="label">User</div>
+        <div class="value" id="login">–</div>
+      </div>
+      <div class="field">
+        <div class="label">User ID</div>
+        <div class="value" id="userId">–</div>
+      </div>
+      <div class="field">
+        <div class="label">Client ID</div>
+        <div class="value" id="clientId">–</div>
+      </div>
+      <div class="field">
+        <div class="label">Channel ID</div>
+        <div class="value" id="channelId">–</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field" style="flex:1 1 100%">
+        <div class="label">Scopes</div>
+        <div class="value" id="scopes">–</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <div class="label">Expires in</div>
+        <div class="value" id="expires">–</div>
+      </div>
+      <div class="field">
+        <div class="label">Status</div>
+        <div class="value" id="status">Validating…</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="relogin" class="ghost">Login again</button>
+      <button id="saveServer" class="ghost">Save to server</button>
+      <button id="clearUrl" class="ghost">Clean URL</button>
+    </div>
+
+    <div class="divider"></div>
+    <small>
+      Suggestion: If you want to renew your token, use the "Login again" button.
+      To use the Hype Train module, make sure you're giving the scope
+      <code>channel:read:hype_train</code> when logging in.
+    </small>
+  </div>
+
+  <script>
+    function parseHash() {
+      const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
+      const params = new URLSearchParams(hash);
+      return {
+        access_token: params.get('access_token'),
+        scope: params.get('scope') ? params.get('scope').split(' ') : [],
+        expires_in: params.get('expires_in') ? Number(params.get('expires_in')) : null,
+        state: params.get('state') || null,
+        token_type: params.get('token_type') || null
+      };
+    }
+
+    async function validateToken(token) {
+      const res = await fetch('https://id.twitch.tv/oauth2/validate', {
+        headers: { 'Authorization': 'OAuth ' + token }
+      });
+      if (!res.ok) throw new Error('Invalid token');
+      return res.json(); // {client_id, login, user_id, expires_in, scopes, ...}
+    }
+
+    function mask(token) {
+      if (!token) return '';
+      if (token.length <= 12) return token.replace(/.(?=.{4})/g, '•');
+      const start = token.slice(0, 6);
+      const end = token.slice(-4);
+      return start + '•'.repeat(Math.max(0, token.length - 10)) + end;
+    }
+
+    (async function init() {
+      const tokenField = document.getElementById('tokenInput');
+      const toggleMaskBtn = document.getElementById('toggleMask');
+      const copyBtn = document.getElementById('copyBtn');
+      const statusEl = document.getElementById('status');
+      const loginEl = document.getElementById('login');
+      const userIdEl = document.getElementById('userId');
+      const clientIdEl = document.getElementById('clientId');
+      const channelIdEl = document.getElementById('channelId');
+      const scopesEl = document.getElementById('scopes');
+      const expiresEl = document.getElementById('expires');
+      const reloginBtn = document.getElementById('relogin');
+      const clearUrlBtn = document.getElementById('clearUrl');
+      const saveServerBtn = document.getElementById('saveServer');
+
+      const h = parseHash();
+      let rawToken = h.access_token || '';
+      let showPlain = false;
+
+      if (!rawToken) {
+        statusEl.innerHTML = '<span class="err">Couldn\'t find the access_token in the URL</span>';
+        tokenField.value = '';
+        return;
+      }
+
+      tokenField.value = mask(rawToken);
+
+      try {
+        const info = await validateToken(rawToken);
+        const channelIdRes = await fetch("https://api.twitch.tv/helix/users", {
+          headers: {
+              "Authorization": "Bearer " + rawToken,
+              "Client-Id": clientId
+          }
+        });
+        const channelData = await channelIdRes.json();
+        const channelId = channelData.data[0]?.id || '–';
+        statusEl.innerHTML = '<span class="ok">Valid token</span>';
+        loginEl.textContent = info.login || '–';
+        userIdEl.textContent = info.user_id || '–';
+        clientIdEl.textContent = info.client_id || '–';
+        channelIdEl.textContent = channelId;
+        scopesEl.textContent = (info.scopes && info.scopes.length) ? info.scopes.join(', ') : (h.scope?.join(', ') || '–');
+
+        const secs = typeof info.expires_in === 'number' ? info.expires_in : (h.expires_in || 0);
+        if (secs) {
+          const mins = Math.floor(secs / 60);
+          expiresEl.textContent = `${mins} min (${secs}s)`;
+        } else {
+          expiresEl.textContent = '–';
+        }
+      } catch (e) {
+        statusEl.innerHTML = '<span class="err">Invalid or expired token</span>';
+      }
+
+      toggleMaskBtn.addEventListener('click', () => {
+        showPlain = !showPlain;
+        toggleMaskBtn.textContent = showPlain ? 'Hide' : 'Show';
+        tokenField.value = showPlain ? rawToken : mask(rawToken);
+      });
+
+
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(rawToken);
+          copyBtn.textContent = 'Copied ✓';
+          setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
+        } catch {
+          tokenField.select();
+          document.execCommand('copy');
+          copyBtn.textContent = 'Copied ✓';
+          setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
+        }
+      });
+
+      reloginBtn.addEventListener('click', () => {
+        const CLIENT_ID = '520y5768mtvy8yaqxl9bm8yt4ulmrj';
+        const REDIRECT_URI = window.location.origin + window.location.pathname;
+        const SCOPES = [
+          'channel:read:hype_train'
+        ];
+        const state = Math.random().toString(36).slice(2);
+        const url = new URL('https://id.twitch.tv/oauth2/authorize');
+        url.searchParams.set('client_id', CLIENT_ID);
+        url.searchParams.set('redirect_uri', REDIRECT_URI);
+        url.searchParams.set('response_type', 'token');
+        url.searchParams.set('scope', SCOPES.join(' '));
+        url.searchParams.set('state', state);
+        window.location.href = url.toString();
+      });
+
+      clearUrlBtn.addEventListener('click', () => {
+        history.replaceState(null, '', window.location.pathname);
+      });
+
+      saveServerBtn.addEventListener('click', async () => {
+        try {
+          const token = rawToken;
+          const userId = document.getElementById('userId').textContent;
+          if (!token) return;
+
+
+          await fetch('https://twitch.cafecloudnine.com/api/save_token', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ userId, token })
+          });
+          if(res.ok) alert('Token saved on server successfully!\nGo back to the widget to finish configuration.');
+          else alert('Failed to save token on server.');
+        } catch (e) {
+          console.error(e);
+          alert('Error while saving token.');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
+
