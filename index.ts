@@ -89,6 +89,7 @@ app.post("/registerStreamer", async (req, res) => {
     }
 });
 
+
 // Connect to Twitch WebSocket
 async function connectTwitchWS(token: string, channelId: string) {
     const ws = new WebSocket("wss://eventsub.wss.twitch.tv/ws");
@@ -124,7 +125,13 @@ async function connectTwitchWS(token: string, channelId: string) {
 
             widgetClients.forEach((client) => {
                 if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({ channelId, event }));
+                    client.send(JSON.stringify({
+                        channelId,
+                        eventType: data.payload.subscription.type,
+                        event,
+                        userId: event.user_id || null,
+                        userName: event.user_name || null
+                    }));
                 }
             });
         }
@@ -148,6 +155,7 @@ const server = app.listen(PORT, () => {
 server.on("upgrade", (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => {
         widgetClients.push(ws);
+        console.log("Widget client connected. Total clients:", widgetClients.length);
         ws.on("close", () => {
             widgetClients = widgetClients.filter((client) => client !== ws);
         });
