@@ -51,16 +51,8 @@
         <div class="value" id="login">–</div>
       </div>
       <div class="field">
-        <div class="label">User ID</div>
+        <div class="label">User ID/Channel ID</div>
         <div class="value" id="userId">–</div>
-      </div>
-      <div class="field">
-        <div class="label">Client ID</div>
-        <div class="value" id="clientId">–</div>
-      </div>
-      <div class="field">
-        <div class="label">Channel ID</div>
-        <div class="value" id="channelId">–</div>
       </div>
     </div>
 
@@ -132,7 +124,6 @@
       const statusEl = document.getElementById('status');
       const loginEl = document.getElementById('login');
       const userIdEl = document.getElementById('userId');
-      const clientIdEl = document.getElementById('clientId');
       const channelIdEl = document.getElementById('channelId');
       const scopesEl = document.getElementById('scopes');
       const expiresEl = document.getElementById('expires');
@@ -157,19 +148,22 @@
         const channelIdRes = await fetch("https://api.twitch.tv/helix/users", {
           headers: {
               "Authorization": "Bearer " + rawToken,
-              "Client-Id": clientId
+              "Client-Id": info.client_id
           }
         });
         const channelData = await channelIdRes.json();
-        const channelId = channelData.data[0]?.id || '–';
-        statusEl.innerHTML = '<span class="ok">Valid token</span>';
-        loginEl.textContent = info.login || '–';
-        userIdEl.textContent = info.user_id || '–';
-        clientIdEl.textContent = info.client_id || '–';
-        channelIdEl.textContent = channelId;
-        scopesEl.textContent = (info.scopes && info.scopes.length) ? info.scopes.join(', ') : (h.scope?.join(', ') || '–');
+        const channelId = channelData.data[0]?.id || info.user_id || '–';
 
-        const secs = typeof info.expires_in === 'number' ? info.expires_in : (h.expires_in || 0);
+        statusEl.innerHTML = '<span class="ok">Valid token</span>';
+          loginEl.textContent = info.login || '–';
+          userIdEl.textContent = info.user_id || '–';
+          scopesEl.textContent = (info.scopes && info.scopes.length) 
+            ? info.scopes.join(', ') 
+            : (h.scope?.join(', ') || '–');
+
+        const secs = typeof info.expires_in === 'number' 
+          ? info.expires_in 
+          : (h.expires_in || 0);
         if (secs) {
           const mins = Math.floor(secs / 60);
           expiresEl.textContent = `${mins} min (${secs}s)`;
@@ -177,6 +171,7 @@
           expiresEl.textContent = '–';
         }
       } catch (e) {
+        console.error(e);
         statusEl.innerHTML = '<span class="err">Invalid or expired token</span>';
       }
 
@@ -226,8 +221,12 @@
           const userId = document.getElementById('userId').textContent;
           if (!token) return;
 
+          if (!userId || userId === "–") {
+            alert("Invalid userId, could not save token.");
+            return;
+          }
 
-          await fetch('https://twitch.cafecloudnine.com/api/save_token', {
+          const res = await fetch('https://twitch.cafecloudnine.com/api/save_token', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
@@ -245,4 +244,3 @@
   </script>
 </body>
 </html>
-
