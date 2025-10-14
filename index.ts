@@ -1,6 +1,6 @@
 import express from "express";
 import { WebSocketServer } from "ws";
-import WebSocket from "ws";
+import * as http from "http";
 import { fetch } from "bun";
 import { config } from "dotenv";
 import db from './db.js';
@@ -8,6 +8,7 @@ import db from './db.js';
 config();
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT;
 const clientId = process.env.TWITCH_CLIENT_ID;
 
@@ -148,7 +149,7 @@ async function connectTwitchWS(token: string, channelId: string) {
     });
 }
 
-const server = app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`Server is running on PORT ${PORT}`);
 });
 
@@ -156,8 +157,10 @@ server.on("upgrade", (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => {
         widgetClients.push(ws);
         console.log("Widget client connected. Total clients:", widgetClients.length);
+
         ws.on("close", () => {
             widgetClients = widgetClients.filter((client) => client !== ws);
+            console.log("Widget client disconnected. Total clients:", widgetClients.length);
         });
     });
 });
