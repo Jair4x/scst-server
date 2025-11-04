@@ -8,13 +8,13 @@ import db from './db.js';
 config();
 
 const app = express();
-const server = http.createServer(app);
 const PORT = process.env.PORT;
 const clientId = process.env.TWITCH_CLIENT_ID;
 
 app.use(express.json());
 
 // Websocket config
+const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 let widgetClients: WebSocket[] = [];
 
@@ -90,7 +90,6 @@ app.post("/registerStreamer", async (req, res) => {
     }
 });
 
-
 // Connect to Twitch WebSocket
 async function connectTwitchWS(token: string, channelId: string) {
     const ws = new WebSocket("wss://eventsub.wss.twitch.tv/ws");
@@ -103,16 +102,16 @@ async function connectTwitchWS(token: string, channelId: string) {
     };
     streamerSessions[channelId] = session;
 
-    ws.on("open", () => {
+    ws.onopen = () => {
         console.log(`[${channelId}] Connected to Twitch EventSub WS.`);
-    });
+    };
 
-    ws.on("error", (err) => {
+    ws.onerror = (err) => {
         console.error(`[${channelId}] WS error:`, err);
-    });
+    };
 
-    ws.on("message", async (msg) => {
-        const data = JSON.parse(msg.toString());
+    ws.onmessage = async (msg) => {
+        const data = JSON.parse(msg.data);
 
         if (data.metadata?.message_type === "session_welcome") {
             session.sessionId = data.payload.session.id;
@@ -142,16 +141,53 @@ async function connectTwitchWS(token: string, channelId: string) {
             ws.close();
             connectTwitchWS(token, channelId);
         }
-    });
+    };
 
-    ws.on("close", (code, reason) => {
-        console.log(`[${channelId}] Connection closed: code=${code}, reason=${reason.toString()}`);
-    });
+    ws.onclose = (code, reason) => {
+        console.log(`[${channelId}] Connection closed: code=${code}, reason=${reason?.toString() | 'No reason provided'}`);
+    };
 }
 
 server.listen(PORT, () => {
     console.log(`Server is running on PORT ${PORT}`);
 });
+
+// Validate tokens and connect valid ones to Twitch WS on startup
+async function checkAndConnectTokens() {
+    try {
+        await db.read();
+        const tokens = db.data?.tokens ?? [];
+
+        for (const entry of [...tokens]) {
+            const { userId, token } = entry;
+            try {
+                const res = await fetch('https://id.twitch.tv/oauth2/validate', {
+                    headers: { 'Authorization': `OAuth ${token}` }
+                });
+
+                if (!res.ok) {
+                    console.warn(`[${userId}] Token invalid or expired (validate status: ${res.status}). Removing from tokens.json...`);
+                    db.data.tokens = db.data.tokens.filter((t: any) => t.token !== token || t.userId !== userId);
+                    await db.write();
+                    continue;
+                }
+
+                const info = await res.json();
+                const twitchUserId = info.user_id ?? userId;
+                console.log(`[${userId}] Token valid for twitch user ${twitchUserId}. Connecting...`);
+                // Attempt to connect to Twitch WS for this user
+                await connectTwitchWS(token, twitchUserId);
+            } catch (err: any) {
+                console.error(`[${userId}] Error validating/connecting token:`, err);
+            }
+        }
+    } catch (err) {
+        console.error('Error reading tokens DB on startup:', err);
+    }
+}
+
+// Start validation after initial server startup so logs show in order
+checkAndConnectTokens();
 
 server.on("upgrade", (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => {
@@ -184,5 +220,27 @@ async function subscribeToEvents(token: string, channelId: string, sessionId: st
             })
         });
         console.log(`[${channelId}] Subscribed hype_train.${e} -> status: ${res.status}`);
+
+        // If token is invalid/expired (common status 401/403), remove it from DB and close session
+        if (!res.ok && (res.status === 401 || res.status === 403)) {
+            console.warn(`[${channelId}] Token unauthorized when subscribing (status ${res.status}). Removing token from tokens.json and closing WS.`);
+            try {
+                await db.read();
+                if (db.data?.tokens) {
+                    db.data.tokens = db.data.tokens.filter((t: any) => t.token !== token || t.userId !== channelId);
+                    await db.write();
+                }
+            } catch (err) {
+                console.error(`[${channelId}] Error removing token from DB:`, err);
+            }
+
+            // Close associated websocket if exists
+            const session = streamerSessions[channelId];
+            if (session?.ws && session.ws.readyState === WebSocket.OPEN) {
+                session.ws.close();
+            }
+            // stop attempting further subscriptions
+            break;
+        }
     }
 }
